@@ -1,4 +1,3 @@
-```yaml
 name: Fittrek CI
 
 on:
@@ -30,4 +29,3 @@ jobs:
 
       - name: Build application
         run: npm run build
-```
