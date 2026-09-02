@@ -1,3 +1,4 @@
+```yaml
 name: Fittrek CI/CD
 
 on:
@@ -42,7 +43,7 @@ jobs:
           source: "."
           target: "~/fittrek"
 
-      - name: Deploy application
+      - name: Start application on EC2
         uses: appleboy/ssh-action@v1.2.2
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -51,11 +52,13 @@ jobs:
           script: |
             cd ~/fittrek
 
-            curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-            sudo apt-get install -y nodejs
+            node -v
+            npm -v
 
             npm ci
             npm run build
 
             pkill -f "next start" || true
+
             nohup npm start > app.log 2>&1 &
+```
