@@ -11,35 +11,56 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Get the code from main
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # 2. Use Node.js 24 for the GitHub build
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
 
+      # 3. Install dependencies on GitHub runner
       - name: Install dependencies
         run: npm ci
 
+      # 4. Build the Next.js application on GitHub
       - name: Build application
         run: npm run build
 
+      # 5. Check that Next.js created the standalone build
+      - name: Verify production build
+        run: |
+          test -f .next/standalone/server.js
+          test -d .next/standalone/.next
+          echo "Standalone build verified successfully."
+
+      # 6. Create a small deployment package
       - name: Prepare deployment package
         run: |
           rm -rf deploy
-          mkdir -p deploy/.next
+          mkdir -p deploy
 
-          cp -r .next/standalone/* deploy/
-          cp -r .next/static deploy/.next/static
-          
+          cp -a .next/standalone/. deploy/
+
+          mkdir -p deploy/.next
+          cp -a .next/static deploy/.next/static
+
           if [ -d "public" ]; then
-            cp -r public deploy/public
+            cp -a public deploy/public
           fi
+
+          test -f deploy/server.js
+          test -d deploy/.next
 
           tar -czf fittrek-deploy.tar.gz -C deploy .
 
+          echo "Deployment package created."
+          ls -lh fittrek-deploy.tar.gz
+
+      # 7. Copy only the production package to EC2
       - name: Copy deployment package to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -49,6 +70,7 @@ jobs:
           source: "fittrek-deploy.tar.gz"
           target: "~/"
 
+      # 8. Extract and start the application on EC2
       - name: Start application on EC2
         uses: appleboy/ssh-action@v1.2.2
         with:
@@ -57,24 +79,37 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           command_timeout: 5m
           script: |
+            echo "Checking Node.js..."
+            node -v
+            npm -v
+
+            echo "Preparing application directory..."
             rm -rf ~/fittrek
             mkdir -p ~/fittrek
 
+            echo "Extracting deployment package..."
             tar -xzf ~/fittrek-deploy.tar.gz -C ~/fittrek
             rm -f ~/fittrek-deploy.tar.gz
 
             cd ~/fittrek
 
+            echo "Checking production files..."
+            test -f server.js
+            test -d .next
+
+            echo "Stopping previous application..."
             if [ -f ~/fittrek/app.pid ]; then
-              kill "$(cat ~/fittrek/app.pid)" || true
+              kill "$(cat ~/fittrek/app.pid)" 2>/dev/null || true
               rm -f ~/fittrek/app.pid
             fi
 
+            echo "Starting Next.js application..."
             nohup node server.js > app.log 2>&1 &
             echo $! > app.pid
 
             sleep 5
 
+            echo "Checking application process..."
             if kill -0 "$(cat app.pid)" 2>/dev/null; then
               echo "Application started successfully."
             else
@@ -82,3 +117,5 @@ jobs:
               cat app.log
               exit 1
             fi
+
+            echo "Deployment completed successfully."
