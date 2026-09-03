@@ -7,46 +7,78 @@ on:
 
 jobs:
   deploy:
-    name: Deploy to AWS EC2
+    name: Build and Deploy to AWS EC2
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Copy application to EC2
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build
+
+      - name: Prepare deployment package
+        run: |
+          rm -rf deploy
+          mkdir -p deploy/.next
+
+          cp -r .next/standalone/* deploy/
+          cp -r .next/static deploy/.next/static
+          
+          if [ -d "public" ]; then
+            cp -r public deploy/public
+          fi
+
+          tar -czf fittrek-deploy.tar.gz -C deploy .
+
+      - name: Copy deployment package to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          source: "package.json,package-lock.json,next.config.ts,tsconfig.json,next-env.d.ts,postcss.config.mjs,eslint.config.mjs,components.json,src,public,prisma"
-          target: "~/fittrek"
+          source: "fittrek-deploy.tar.gz"
+          target: "~/"
 
-      - name: Deploy application
+      - name: Start application on EC2
         uses: appleboy/ssh-action@v1.2.2
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          command_timeout: 15m
+          command_timeout: 5m
           script: |
+            rm -rf ~/fittrek
+            mkdir -p ~/fittrek
+
+            tar -xzf ~/fittrek-deploy.tar.gz -C ~/fittrek
+            rm -f ~/fittrek-deploy.tar.gz
+
             cd ~/fittrek
 
-            echo "Checking Node.js..."
-            node -v
-            npm -v
+            if [ -f ~/fittrek/app.pid ]; then
+              kill "$(cat ~/fittrek/app.pid)" || true
+              rm -f ~/fittrek/app.pid
+            fi
 
-            echo "Installing dependencies..."
-            npm ci
+            nohup node server.js > app.log 2>&1 &
+            echo $! > app.pid
 
-            echo "Building application..."
-            npm run build
+            sleep 5
 
-            echo "Stopping previous application..."
-            pkill -f "next start" || true
-
-            echo "Starting application..."
-            nohup npm start > app.log 2>&1 &
-
-            echo "Deployment completed."
+            if kill -0 "$(cat app.pid)" 2>/dev/null; then
+              echo "Application started successfully."
+            else
+              echo "Application failed to start."
+              cat app.log
+              exit 1
+            fi
