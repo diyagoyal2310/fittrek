@@ -1,0 +1,52 @@
+name: Fittrek CD
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Deploy to AWS EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Copy application to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "package.json,package-lock.json,next.config.ts,tsconfig.json,next-env.d.ts,postcss.config.mjs,eslint.config.mjs,components.json,src,public,prisma"
+          target: "~/fittrek"
+
+      - name: Deploy application
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 15m
+          script: |
+            cd ~/fittrek
+
+            echo "Checking Node.js..."
+            node -v
+            npm -v
+
+            echo "Installing dependencies..."
+            npm ci
+
+            echo "Building application..."
+            npm run build
+
+            echo "Stopping previous application..."
+            pkill -f "next start" || true
+
+            echo "Starting application..."
+            nohup npm start > app.log 2>&1 &
+
+            echo "Deployment completed."
